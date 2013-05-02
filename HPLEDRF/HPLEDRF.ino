@@ -12,7 +12,6 @@
 // - shut down lamp if temperature > threshold
 // - ramping pwm changes
 // - hysteresis ?
-// - initial relay state
 
 // features:
 // - measure fan pulse 
@@ -21,6 +20,7 @@
 // - indicator LED
 // - control fan via PWM
 // - control LED via PWM
+// - switch LED driver power via relay
 
 //
 // Ports & Plugs
@@ -30,6 +30,13 @@ static LuxPlug lux_plug(bus1, 0x39);
 static Port fan_port(2);
 static Port temperature_port(3);
 static Port relay_port(4);
+
+//
+// global state
+//
+static uint8_t counter = 0;
+#define DATA_MSG_SIZE 11
+static uint8_t data_msg[DATA_MSG_SIZE];
 
 namespace led_pwm {
   static const byte PIN = 9;
@@ -80,7 +87,8 @@ namespace led_pwm {
 }
 
 namespace fan {
-  static byte pwm_setting = 35;
+  static const uint8_t default_pwm_setting = 35;
+  static uint8_t pwm_setting = 0;
   volatile uint16_t pulse_count = 0;
   static uint16_t pulse_count_save = 0;
   static uint8_t pulse_per_second = 10;
@@ -89,16 +97,26 @@ namespace fan {
     ++pulse_count;
   }
 
+  static inline void normal() {
+    pwm_setting = default_pwm_setting;
+    fan_port.anaWrite(pwm_setting);
+  }
+
   static inline void setup() {
     fan_port.mode(OUTPUT);
-    fan_port.anaWrite(pwm_setting);
     attachInterrupt(1, pulse_interrupt, FALLING);
+    normal();
   }
 
   static inline void update_pulse_per_second() {
     const uint16_t l = pulse_count;
     pulse_per_second = l - pulse_count_save;
     pulse_count_save = l;
+  }
+
+  static inline void full_blast() {
+    pwm_setting = 255;
+    fan_port.anaWrite(pwm_setting);
   }
 }
 
@@ -161,22 +179,24 @@ namespace relay {
   static bool value = false;
 
   static inline void on() {
-    relay_port.digiWrite(HIGH);
-    delay(250);
+    relay_port.digiWrite(1);
+    delay(1000);
     relay_port.digiWrite(LOW);
     value = true;
   }
 
   static inline void off() {
-    relay_port.digiWrite2(HIGH);
-    delay(250);
+    relay_port.digiWrite2(1);
+    delay(1000);
     relay_port.digiWrite2(LOW);
     value = false;
   }
 
   static inline void setup() {
     relay_port.mode(OUTPUT);
+    relay_port.digiWrite(LOW);
     relay_port.mode2(OUTPUT);
+    relay_port.digiWrite2(LOW);
     off();
   }
 }
@@ -200,10 +220,6 @@ namespace rf {
     rf12_sendWait(1);
   }
 }
-
-static uint8_t counter = 0;
-#define DATA_MSG_SIZE 10
-static uint8_t data_msg[DATA_MSG_SIZE];
 
 namespace commands {
   static inline void on() {
@@ -253,6 +269,7 @@ namespace commands {
 
   static inline void handle() {
     indicator::on();
+    // Serial.println(rf::command());
     switch (rf::command()) {
       case 0: on(); break;
       case 1: off(); break;
@@ -273,18 +290,41 @@ static inline void take_measurements() {
   temperature::handle();
 
   data_msg[0] = counter;
-  memcpy(data_msg+1, &lux::value, 2);
+  data_msg[1] = relay::value;
+  data_msg[2] = led_pwm::auto_mode;
   data_msg[3] = temperature::value;
   data_msg[4] = fan::pulse_per_second;
   data_msg[5] = led_pwm::setting;
-  data_msg[6] = fan::pwm_setting;
-  data_msg[7] = 0; // TODO led_relay_setting;
-  data_msg[8] = led_pwm::auto_mode;
-  data_msg[9] = led_pwm::auto_calculated_pwm;
+  data_msg[6] = led_pwm::auto_setting;
+  data_msg[7] = led_pwm::auto_calculated_pwm;
+  data_msg[8] = fan::pwm_setting;
+  memcpy(data_msg+9, &lux::value, 2);
 
-  Serial.print(lux::value); Serial.print(" ");
+  Serial.print("lux:"); Serial.print(lux::value); Serial.print(" temp:");
   Serial.println(temperature::value);
   indicator::off();
+}
+
+static inline void safety_checks() {
+
+  if (temperature::value > 70) {
+    Serial.println(F("Danger, temp > 70, shutting off!"));
+    relay::off();
+    return;
+  }
+
+  if (temperature::value > 60) {
+    Serial.println(F("temp > 60, fan full blast!"));
+    fan::full_blast();
+  } else {
+    fan::normal();
+  }
+
+  if (fan::pulse_per_second < 20) {
+    Serial.println(F("fan pulse not found, shutting off!"));
+    relay::off();
+    return;
+  }
 }
 
 void setup () {
@@ -296,6 +336,7 @@ void setup () {
   temperature::setup();
   fan::setup();
   led_pwm::setup();
+  relay::setup();
 }
 
 void loop () {
@@ -315,6 +356,7 @@ void loop () {
     take_measurements(); 
     led_pwm::handle_auto(lux::value, loop_count % 20 == 0);
     loop_count = 0;
+    safety_checks();
 
   }
   delay(50);
