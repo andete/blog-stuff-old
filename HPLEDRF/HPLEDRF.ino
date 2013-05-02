@@ -35,37 +35,46 @@ namespace led_pwm {
   static const byte PIN = 9;
   static byte setting = 35;
   static bool auto_mode = false;
-  static uint8_t auto_mode_setting = 0;
-  static uint8_t auto_mode_calculated_pwm = 0;
+  static uint8_t auto_setting = 0;
+  static uint8_t auto_calculated_pwm = 0;
 
   static inline void setup() {
     pinMode(PIN, OUTPUT);
     analogWrite(PIN, setting);
   }
 
-  static inline void auto_mode_on() {
+  static inline void set_dim(const uint8_t dim) {
+    setting = dim;
+  }
+
+  static inline void set_auto(const uint8_t dim) {
+    auto_setting = dim;
+  }
+
+  static inline void auto_on() {
     auto_mode = true;
   }
 
-  static inline void auto_mode_off() {
+  static inline void auto_off() {
     auto_mode = false;
   }
 
-  static inline void handle_auto_mode(const uint16_t lux, bool log) {
+  static inline void handle_auto(const uint16_t lux, bool log) {
+    if (!auto_mode) { return; }
     // auto mode uses lamp mode setting as maximum
     // led auto_mode value sets the lux threshold point where
     // the lamp will be turned on with minimal dimming
     const uint16_t slux = sqrt(lux);
-    const uint16_t start = auto_mode_setting;
+    const uint16_t start = auto_setting;
     const uint16_t full = min(0, start - 30);
     long r = map(slux, full, start, setting, 0);
     if (r < 0) { r = 0; }
     if (r > setting) { r = setting; }
-    auto_mode_calculated_pwm = r;
-    analogWrite(PIN, auto_mode_calculated_pwm);
+    auto_calculated_pwm = r;
+    analogWrite(PIN, auto_calculated_pwm);
     if (log) {
       Serial.print("A "); Serial.print(slux); Serial.print(" "); Serial.print(full); Serial.print(" ");
-      Serial.print(start); Serial.print(" "); Serial.println(auto_mode_calculated_pwm);
+      Serial.print(start); Serial.print(" "); Serial.println(auto_calculated_pwm);
     }
   }
 }
@@ -108,7 +117,7 @@ namespace temperature {
   }
 
   static inline void handle() {
-    const int t = temperature_port.anaRead();
+    const int16_t t = temperature_port.anaRead();
     value = map(t, 0, 1023, 0, 330); // 10 mV/C
   }
 }
@@ -129,16 +138,19 @@ namespace lux {
 namespace indicator {
   static const byte PIN = 8;
 
-  static inline void led (bool on) {
-    digitalWrite(PIN, on ? 0 : 1);
+  static inline void on() {
+    digitalWrite(PIN, LOW);
+  }
+  static inline void off() {
+    digitalWrite(PIN, HIGH);
   }
 
   static inline void setup() {
     pinMode(PIN, OUTPUT);
-    for (int i = 0; i < 10; ++i) {
-      led(true);
+    for (int8_t i = 0; i < 10; ++i) {
+      on();
       delay(100);
-      led(false);
+      off();
       delay(100);
     }
   }
@@ -189,6 +201,10 @@ namespace rf {
   }
 }
 
+static uint8_t counter = 0;
+#define DATA_MSG_SIZE 10
+static uint8_t data_msg[DATA_MSG_SIZE];
+
 namespace commands {
   static inline void on() {
     rf::ack();
@@ -200,37 +216,77 @@ namespace commands {
     relay::off();
   }
 
+  static inline void dim_value() {
+    rf::ack();
+    if (rf12_len >= 2) {
+      led_pwm::set_dim(rf12_data[1]);
+    }
+  }
+
   static inline void auto_on() {
     rf::ack();
-    led_pwm::auto_mode_on();
+    led_pwm::auto_on();
   }
 
   static inline void auto_off() {
     rf::ack();
-    led_pwm::auto_mode_off();
+    led_pwm::auto_off();
   }
 
   static inline void auto_value() {
     rf::ack();
     if (rf12_len >= 2) {
-      led_pwm::auto_mode_setting = rf12_data[1];
+      led_pwm::set_auto(rf12_data[1]);
     }
+  }
+
+  static inline void beep() {
+    rf::ack();
+    temperature::beep();
+  }
+
+  static inline void query_data() {
+    rf12_sendStart(RF12_ACK_REPLY, data_msg, DATA_MSG_SIZE);
+    rf12_sendWait(1);
+    ++counter;
   }
 
   static inline void handle() {
+    indicator::on();
     switch (rf::command()) {
       case 0: on(); break;
       case 1: off(); break;
-      case 2: auto_on(); break;
-      case 3: auto_off(); break;
-      case 4: auto_value(); break;
+      case 2: dim_value(); break;
+      case 3: auto_on(); break;
+      case 4: auto_off(); break;
+      case 5: auto_value(); break;
+      case 10: query_data(); break;
+      case 11: beep(); break;
     }
+    indicator::off();
   }
 }
 
-//
-// SETUP
-//
+static inline void take_measurements() {
+  indicator::on();
+  lux::handle();
+  temperature::handle();
+
+  data_msg[0] = counter;
+  memcpy(data_msg+1, &lux::value, 2);
+  data_msg[3] = temperature::value;
+  data_msg[4] = fan::pulse_per_second;
+  data_msg[5] = led_pwm::setting;
+  data_msg[6] = fan::pwm_setting;
+  data_msg[7] = 0; // TODO led_relay_setting;
+  data_msg[8] = led_pwm::auto_mode;
+  data_msg[9] = led_pwm::auto_calculated_pwm;
+
+  Serial.print(lux::value); Serial.print(" ");
+  Serial.println(temperature::value);
+  indicator::off();
+}
+
 void setup () {
   Serial.begin(9600);
 
@@ -242,92 +298,24 @@ void setup () {
   led_pwm::setup();
 }
 
-static uint8_t counter = 0;
-#define DATA_MSG_SIZE 10
-static uint8_t data_msg[DATA_MSG_SIZE];
-
-static void do_measurements() {
-  indicator::led(true);
-
-  lux::handle();
-  Serial.print(lux::value); Serial.print(" ");
-
-  temperature::handle();
-  Serial.println(temperature::value);
-
-  data_msg[0] = counter;
-  memcpy(data_msg+1, &lux::value, 2);
-  data_msg[3] = temperature::value;
-  data_msg[4] = fan::pulse_per_second;
-  data_msg[5] = led_pwm::setting;
-  data_msg[6] = fan::pwm_setting;
-  data_msg[7] = 0; // TODO led_relay_setting;
-  data_msg[8] = led_pwm::auto_mode;
-  data_msg[9] = led_pwm::auto_mode_calculated_pwm;
-
-  indicator::led(false);
-}
-
-static void query_data() {
-  rf12_sendStart(RF12_ACK_REPLY, data_msg, DATA_MSG_SIZE);
-  rf12_sendWait(1);
-  // increment the counter (it'll wrap from 255 to 0)
-  ++counter;
-}
-
-static void beep() {
-  rf12_sendStart(RF12_ACK_REPLY, 0, 0);
-  rf12_sendWait(1);
-  temperature::beep();
-}
-
-static void lamp_mode(const uint8_t mode) {
-  // TODO led_relay_setting = mode > 0;
-  // TODO actual relay triggering
-  //if (mode > 0) {
-    led_pwm::setting = mode;
-    analogWrite(led_pwm::PIN, led_pwm::setting);
-  //}
-}
-
-static void auto_mode(const uint8_t mode) {
-  led_pwm::auto_mode = mode;
-  // TODO actual auto mode handling
-}
-
 void loop () {
   static int8_t loop_count = 0;
 
   if (rf::available()) {
-    indicator::led(true);
     commands::handle();
-    switch (rf::command()) {
-    case 0:
-      query_data();
-      break;
-    case 1: // beep
-      beep();
-      break;
-    case 2:
-      lamp_mode(rf12_data[1]);
-      break;
-    case 3:
-      auto_mode(rf12_data[1]);
-      break;
-    }
-    indicator::led(false);
     return;
   }
 
   ++loop_count;
-  // do measurements every second
+
+  // take measurements every second
   if (loop_count % 20 == 0) { 
+
     fan::update_pulse_per_second();
-    do_measurements(); 
+    take_measurements(); 
+    led_pwm::handle_auto(lux::value, loop_count % 20 == 0);
     loop_count = 0;
-  }
-  if (led_pwm::auto_mode > 0) {
-    led_pwm::handle_auto_mode(lux::value, loop_count % 20 == 0);
+
   }
   delay(50);
 }
