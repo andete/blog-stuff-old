@@ -84,25 +84,34 @@ namespace fan {
   }
 }
 
-//
-// temperature, lux
-//
-static int8_t temperature = 0;
-static uint16_t lux;
+namespace temperature {
+  static int8_t value = 0;
 
-static inline void temperature_setup() {
-  temperature_port.mode(OUTPUT);
-  temperature_port.digiWrite(1); // Beep.
-  delay(500);
-  temperature_port.digiWrite(0);
+  static inline void setup() {
+    temperature_port.mode(OUTPUT);
+    temperature_port.digiWrite(1); // Beep.
+    delay(500);
+    temperature_port.digiWrite(0);
+  }
+
+  static inline void handle() {
+    const int t = temperature_port.anaRead();
+    value = map(t, 0, 1023, 0, 330); // 10 mV/C
+  }
 }
 
-static inline void lux_setup() {
-  lux_plug.begin();
-}
+namespace lux {
+  static uint16_t value = 0;
 
-// message counter
-static uint8_t counter = 0;
+  static inline void setup() {
+    lux_plug.begin();
+  }
+
+  static inline void handle() {
+    lux_plug.getData();
+    value = lux_plug.calcLux();
+  }
+}
 
 // query data message
 #define DATA_MSG_SIZE 10
@@ -163,27 +172,26 @@ void setup () {
 
   indicator_led_setup();
   rf_setup();
-  lux_setup();
-  temperature_setup();
+  lux::setup();
+  temperature::setup();
   fan::setup();
   led_pwm::setup();
 }
 
- 
+static uint8_t counter = 0;
+
 static void do_measurements() {
   led(true);
 
-  lux_plug.getData();
-  lux = lux_plug.calcLux();
-  Serial.print(lux); Serial.print(" ");
+  lux::handle();
+  Serial.print(lux::value); Serial.print(" ");
 
-  const int t = temperature_port.anaRead();
-  temperature = map(t, 0, 1023, 0, 330); // 10 mV/C
-  Serial.println(temperature);
+  temperature::handle();
+  Serial.println(temperature::value);
 
   data_msg[0] = counter;
-  memcpy(data_msg+1, &lux, 2);
-  data_msg[3] = temperature;
+  memcpy(data_msg+1, &lux::value, 2);
+  data_msg[3] = temperature::value;
   data_msg[4] = fan::pulse_per_second;
   data_msg[5] = led_pwm::setting;
   data_msg[6] = fan::pwm_setting;
@@ -257,7 +265,7 @@ void loop () {
     loop_count = 0;
   }
   if (led_pwm::auto_mode > 0) {
-    led_pwm::handle_auto_mode(lux, loop_count % 20 == 0);
+    led_pwm::handle_auto_mode(lux::value, loop_count % 20 == 0);
   }
   delay(50);
 }
