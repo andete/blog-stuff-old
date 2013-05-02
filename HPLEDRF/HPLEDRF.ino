@@ -1,5 +1,8 @@
 /* -*- Mode: C; tab-width: 2; indent-tabs-mode: nil -*- */
 
+// (C) 2013 Joost Yervante Damad <joost@damad.be>
+// parts are inspired by the jeelabs website examples
+
 #include <Ports.h>
 #include <JeeLib.h>
 
@@ -26,31 +29,77 @@ static PortI2C bus1(1);
 static LuxPlug lux_plug(bus1, 0x39);
 static Port fan_port(2);
 static Port temperature_port(3);
+static Port relay_port(4);
 
-//
-// LED PWM
-//
-static const byte LED_PWM_PIN = 9;
-static byte led_pwm_setting = 35;
-static bool led_relay_setting = true; // TODO
-static uint8_t led_auto_mode = 0;
-static uint8_t led_auto_mode_calculated_pwm = 0;
+namespace led_pwm {
+  static const byte PIN = 9;
+  static byte setting = 35;
+  static uint8_t auto_mode = 0;
+  static uint8_t auto_mode_calculated_pwm = 0;
 
-//
-// FAN PWM
-//
-static byte fan_pwm_setting = 35;
-volatile uint16_t fan_pulse_count = 0;
-static uint16_t fan_pulse_count_save = 0;
-static uint8_t fan_pulse_per_second = 10;
+  static inline void setup() {
+    pinMode(PIN, OUTPUT);
+    analogWrite(PIN, setting);
+  }
 
-void fan_pulse_interrupt() {
-  ++fan_pulse_count;
+  static inline void handle_auto_mode(const uint16_t lux, bool log) {
+    // auto mode uses lamp mode setting as maximum
+    // led auto_mode value sets the lux threshold point where
+    // the lamp will be turned on with minimal dimming
+    const uint16_t slux = sqrt(lux);
+    const uint16_t start = auto_mode;
+    const uint16_t full = min(0, start - 30);
+    long r = map(slux, full, start, setting, 0);
+    if (r < 0) { r = 0; }
+    if (r > setting) { r = setting; }
+    auto_mode_calculated_pwm = r;
+    analogWrite(PIN, auto_mode_calculated_pwm);
+    if (log) {
+      Serial.print("A "); Serial.print(slux); Serial.print(" "); Serial.print(full); Serial.print(" ");
+      Serial.print(start); Serial.print(" "); Serial.println(auto_mode_calculated_pwm);
+    }
+  }
 }
 
+namespace fan {
+  static byte pwm_setting = 35;
+  volatile uint16_t pulse_count = 0;
+  static uint16_t pulse_count_save = 0;
+  static uint8_t pulse_per_second = 10;
+
+  void pulse_interrupt() {
+    ++pulse_count;
+  }
+
+  static inline void setup() {
+    fan_port.mode(OUTPUT);
+    fan_port.anaWrite(pwm_setting);
+    attachInterrupt(1, pulse_interrupt, FALLING);
+  }
+
+  static inline void update_pulse_per_second() {
+    const uint16_t l = pulse_count;
+    pulse_per_second = l - pulse_count_save;
+    pulse_count_save = l;
+  }
+}
+
+//
 // temperature, lux
+//
 static int8_t temperature = 0;
 static uint16_t lux;
+
+static inline void temperature_setup() {
+  temperature_port.mode(OUTPUT);
+  temperature_port.digiWrite(1); // Beep.
+  delay(500);
+  temperature_port.digiWrite(0);
+}
+
+static inline void lux_setup() {
+  lux_plug.begin();
+}
 
 // message counter
 static uint8_t counter = 0;
@@ -59,18 +108,16 @@ static uint8_t counter = 0;
 #define DATA_MSG_SIZE 10
 static uint8_t data_msg[DATA_MSG_SIZE];
 
+//
 // indicator LED
+//
 static const byte INDICATOR_LED = 8;
 
 static inline void led (bool on) {
-  digitalWrite(INDICATOR_LED, on ? 0 : 1); // inverted logic
+  digitalWrite(INDICATOR_LED, on ? 0 : 1);
 }
 
-//
-// SETUP
-//
-void setup () {
-  Serial.begin(9600);
+static inline void indicator_led_setup() {
   pinMode(INDICATOR_LED, OUTPUT);
   for (int i = 0; i < 10; ++i) {
     led(true);
@@ -78,24 +125,48 @@ void setup () {
     led(false);
     delay(100);
   }
+}
 
+//
+// RELAY
+//
+static inline void relay_setup() {
+  relay_port.mode(OUTPUT);
+  relay_port.mode2(OUTPUT);
+}
+
+static inline void relay_on() {
+  relay_port.digiWrite(HIGH);
+  delay(250);
+  relay_port.digiWrite(LOW);
+}
+
+static inline void relay_off() {
+  relay_port.digiWrite2(HIGH);
+  delay(250);
+  relay_port.digiWrite2(LOW);
+}
+
+//
+// RF
+//
+static inline void rf_setup() {
   // this is node 1 in net group 100 on the 868 MHz band
   rf12_initialize(1, RF12_868MHZ, 100);
+}
 
-  lux_plug.begin();
+//
+// SETUP
+//
+void setup () {
+  Serial.begin(9600);
 
-  temperature_port.mode(OUTPUT);
-  temperature_port.digiWrite(1); // Beep.
-  delay(1000);
-  temperature_port.digiWrite(0);
-
-  fan_port.mode(OUTPUT);
-  fan_port.anaWrite(fan_pwm_setting);
-
-  pinMode(LED_PWM_PIN, OUTPUT);
-  analogWrite(LED_PWM_PIN, led_pwm_setting);
-
-  attachInterrupt(1, fan_pulse_interrupt, FALLING);
+  indicator_led_setup();
+  rf_setup();
+  lux_setup();
+  temperature_setup();
+  fan::setup();
+  led_pwm::setup();
 }
 
  
@@ -113,12 +184,12 @@ static void do_measurements() {
   data_msg[0] = counter;
   memcpy(data_msg+1, &lux, 2);
   data_msg[3] = temperature;
-  data_msg[4] = fan_pulse_per_second;
-  data_msg[5] = led_pwm_setting;
-  data_msg[6] = fan_pwm_setting;
-  data_msg[7] = led_relay_setting;
-  data_msg[8] = led_auto_mode;
-  data_msg[9] = led_auto_mode_calculated_pwm;
+  data_msg[4] = fan::pulse_per_second;
+  data_msg[5] = led_pwm::setting;
+  data_msg[6] = fan::pwm_setting;
+  data_msg[7] = 0; // TODO led_relay_setting;
+  data_msg[8] = led_pwm::auto_mode;
+  data_msg[9] = led_pwm::auto_mode_calculated_pwm;
 
   led(false);
 }
@@ -139,16 +210,16 @@ static void beep() {
 }
 
 static void lamp_mode(const uint8_t mode) {
-  led_relay_setting = mode > 0;
+  // TODO led_relay_setting = mode > 0;
   // TODO actual relay triggering
   //if (mode > 0) {
-    led_pwm_setting = mode;
-    analogWrite(LED_PWM_PIN, led_pwm_setting);
+    led_pwm::setting = mode;
+    analogWrite(led_pwm::PIN, led_pwm::setting);
   //}
 }
 
 static void auto_mode(const uint8_t mode) {
-  led_auto_mode = mode;
+  led_pwm::auto_mode = mode;
   // TODO actual auto mode handling
 }
 
@@ -181,29 +252,12 @@ void loop () {
   ++loop_count;
   // do measurements every second
   if (loop_count % 20 == 0) { 
-    const uint16_t l = fan_pulse_count;
-    fan_pulse_per_second = l - fan_pulse_count_save;
-    fan_pulse_count_save = l;
+    fan::update_pulse_per_second();
     do_measurements(); 
     loop_count = 0;
   }
-  // auto_mode handling
-  if (led_relay_setting && led_auto_mode > 0) {
-    // auto mode uses lamp mode setting as maximum
-    // led auto_mode value sets the lux threshold point where
-    // the lamp will be turned on with minimal dimming
-    const uint16_t slux = sqrt(lux);
-    const uint16_t start = led_auto_mode;// map(led_auto_mode, 0, 255, 0, 65535);
-    const uint16_t full = min(0, start - 30);
-    long r = map(slux, full, start, led_pwm_setting, 0);
-    if (r < 0) { r = 0; }
-    if (r > led_pwm_setting) { r = led_pwm_setting; }
-    led_auto_mode_calculated_pwm = r;
-    if (loop_count % 20 == 0) { 
-      Serial.print("A "); Serial.print(slux); Serial.print(" "); Serial.print(full); Serial.print(" ");
-      Serial.print(start); Serial.print(" "); Serial.println(led_auto_mode_calculated_pwm);
-    }
-    analogWrite(LED_PWM_PIN, led_auto_mode_calculated_pwm);
+  if (led_pwm::auto_mode > 0) {
+    led_pwm::handle_auto_mode(lux, loop_count % 20 == 0);
   }
   delay(50);
 }
