@@ -52,6 +52,7 @@ namespace led_pwm {
 
   static inline void set_dim(const uint8_t dim) {
     setting = dim;
+    analogWrite(PIN, setting);
   }
 
   static inline void set_auto(const uint8_t dim) {
@@ -178,14 +179,14 @@ namespace relay {
 
   static bool value = false;
 
-  static inline void on() {
+  static inline void off() {
     relay_port.digiWrite(1);
     delay(1000);
     relay_port.digiWrite(LOW);
     value = true;
   }
 
-  static inline void off() {
+  static inline void on() {
     relay_port.digiWrite2(1);
     delay(1000);
     relay_port.digiWrite2(LOW);
@@ -233,10 +234,10 @@ namespace commands {
   }
 
   static inline void dim_value() {
-    rf::ack();
     if (rf12_len >= 2) {
       led_pwm::set_dim(rf12_data[1]);
     }
+    rf::ack();
   }
 
   static inline void auto_on() {
@@ -250,10 +251,10 @@ namespace commands {
   }
 
   static inline void auto_value() {
-    rf::ack();
     if (rf12_len >= 2) {
       led_pwm::set_auto(rf12_data[1]);
     }
+    rf::ack();
   }
 
   static inline void beep() {
