@@ -34,7 +34,8 @@ static Port relay_port(4);
 namespace led_pwm {
   static const byte PIN = 9;
   static byte setting = 35;
-  static uint8_t auto_mode = 0;
+  static bool auto_mode = false;
+  static uint8_t auto_mode_setting = 0;
   static uint8_t auto_mode_calculated_pwm = 0;
 
   static inline void setup() {
@@ -42,12 +43,20 @@ namespace led_pwm {
     analogWrite(PIN, setting);
   }
 
+  static inline void auto_mode_on() {
+    auto_mode = true;
+  }
+
+  static inline void auto_mode_off() {
+    auto_mode = false;
+  }
+
   static inline void handle_auto_mode(const uint16_t lux, bool log) {
     // auto mode uses lamp mode setting as maximum
     // led auto_mode value sets the lux threshold point where
     // the lamp will be turned on with minimal dimming
     const uint16_t slux = sqrt(lux);
-    const uint16_t start = auto_mode;
+    const uint16_t start = auto_mode_setting;
     const uint16_t full = min(0, start - 30);
     long r = map(slux, full, start, setting, 0);
     if (r < 0) { r = 0; }
@@ -87,11 +96,15 @@ namespace fan {
 namespace temperature {
   static int8_t value = 0;
 
+  static inline void beep(const int16_t len = 100) {
+    temperature_port.digiWrite(1);
+    delay(len);
+    temperature_port.digiWrite(0);
+  }
+
   static inline void setup() {
     temperature_port.mode(OUTPUT);
-    temperature_port.digiWrite(1); // Beep.
-    delay(500);
-    temperature_port.digiWrite(0);
+    beep(500);
   }
 
   static inline void handle() {
@@ -132,21 +145,27 @@ namespace indicator {
 }
 
 namespace relay {
-  static inline void setup() {
-    relay_port.mode(OUTPUT);
-    relay_port.mode2(OUTPUT);
-  }
+
+  static bool value = false;
 
   static inline void on() {
     relay_port.digiWrite(HIGH);
     delay(250);
     relay_port.digiWrite(LOW);
+    value = true;
   }
 
   static inline void off() {
     relay_port.digiWrite2(HIGH);
     delay(250);
     relay_port.digiWrite2(LOW);
+    value = false;
+  }
+
+  static inline void setup() {
+    relay_port.mode(OUTPUT);
+    relay_port.mode2(OUTPUT);
+    off();
   }
 }
 
@@ -154,6 +173,58 @@ namespace rf {
   static inline void setup() {
     // this is node 1 in net group 100 on the 868 MHz band
     rf12_initialize(1, RF12_868MHZ, 100);
+  }
+
+  static inline bool available() {
+    return (rf12_recvDone() && rf12_crc == 0 && rf12_len >= 1);
+  }
+
+  static inline uint8_t command() {
+    return rf12_data[0];
+  }
+
+  static inline void ack() {
+    rf12_sendStart(RF12_ACK_REPLY, 0, 0);
+    rf12_sendWait(1);
+  }
+}
+
+namespace commands {
+  static inline void on() {
+    rf::ack();
+    relay::on();
+  }
+
+  static inline void off() {
+    rf::ack();
+    relay::off();
+  }
+
+  static inline void auto_on() {
+    rf::ack();
+    led_pwm::auto_mode_on();
+  }
+
+  static inline void auto_off() {
+    rf::ack();
+    led_pwm::auto_mode_off();
+  }
+
+  static inline void auto_value() {
+    rf::ack();
+    if (rf12_len >= 2) {
+      led_pwm::auto_mode_setting = rf12_data[1];
+    }
+  }
+
+  static inline void handle() {
+    switch (rf::command()) {
+      case 0: on(); break;
+      case 1: off(); break;
+      case 2: auto_on(); break;
+      case 3: auto_off(); break;
+      case 4: auto_value(); break;
+    }
   }
 }
 
@@ -207,9 +278,7 @@ static void query_data() {
 static void beep() {
   rf12_sendStart(RF12_ACK_REPLY, 0, 0);
   rf12_sendWait(1);
-  temperature_port.digiWrite(1);
-  delay(100);
-  temperature_port.digiWrite(0);
+  temperature::beep();
 }
 
 static void lamp_mode(const uint8_t mode) {
@@ -229,12 +298,10 @@ static void auto_mode(const uint8_t mode) {
 void loop () {
   static int8_t loop_count = 0;
 
-  // handle received message
-  if (rf12_recvDone() && rf12_crc == 0 && rf12_len >= 1) {
-
+  if (rf::available()) {
     indicator::led(true);
-
-    switch (rf12_data[0]) {
+    commands::handle();
+    switch (rf::command()) {
     case 0:
       query_data();
       break;
