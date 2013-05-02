@@ -113,55 +113,48 @@ namespace lux {
   }
 }
 
-// query data message
-#define DATA_MSG_SIZE 10
-static uint8_t data_msg[DATA_MSG_SIZE];
+namespace indicator {
+  static const byte PIN = 8;
 
-//
-// indicator LED
-//
-static const byte INDICATOR_LED = 8;
+  static inline void led (bool on) {
+    digitalWrite(PIN, on ? 0 : 1);
+  }
 
-static inline void led (bool on) {
-  digitalWrite(INDICATOR_LED, on ? 0 : 1);
-}
-
-static inline void indicator_led_setup() {
-  pinMode(INDICATOR_LED, OUTPUT);
-  for (int i = 0; i < 10; ++i) {
-    led(true);
-    delay(100);
-    led(false);
-    delay(100);
+  static inline void setup() {
+    pinMode(PIN, OUTPUT);
+    for (int i = 0; i < 10; ++i) {
+      led(true);
+      delay(100);
+      led(false);
+      delay(100);
+    }
   }
 }
 
-//
-// RELAY
-//
-static inline void relay_setup() {
-  relay_port.mode(OUTPUT);
-  relay_port.mode2(OUTPUT);
+namespace relay {
+  static inline void setup() {
+    relay_port.mode(OUTPUT);
+    relay_port.mode2(OUTPUT);
+  }
+
+  static inline void on() {
+    relay_port.digiWrite(HIGH);
+    delay(250);
+    relay_port.digiWrite(LOW);
+  }
+
+  static inline void off() {
+    relay_port.digiWrite2(HIGH);
+    delay(250);
+    relay_port.digiWrite2(LOW);
+  }
 }
 
-static inline void relay_on() {
-  relay_port.digiWrite(HIGH);
-  delay(250);
-  relay_port.digiWrite(LOW);
-}
-
-static inline void relay_off() {
-  relay_port.digiWrite2(HIGH);
-  delay(250);
-  relay_port.digiWrite2(LOW);
-}
-
-//
-// RF
-//
-static inline void rf_setup() {
-  // this is node 1 in net group 100 on the 868 MHz band
-  rf12_initialize(1, RF12_868MHZ, 100);
+namespace rf {
+  static inline void setup() {
+    // this is node 1 in net group 100 on the 868 MHz band
+    rf12_initialize(1, RF12_868MHZ, 100);
+  }
 }
 
 //
@@ -170,8 +163,8 @@ static inline void rf_setup() {
 void setup () {
   Serial.begin(9600);
 
-  indicator_led_setup();
-  rf_setup();
+  indicator::setup();
+  rf::setup();
   lux::setup();
   temperature::setup();
   fan::setup();
@@ -179,9 +172,11 @@ void setup () {
 }
 
 static uint8_t counter = 0;
+#define DATA_MSG_SIZE 10
+static uint8_t data_msg[DATA_MSG_SIZE];
 
 static void do_measurements() {
-  led(true);
+  indicator::led(true);
 
   lux::handle();
   Serial.print(lux::value); Serial.print(" ");
@@ -199,7 +194,7 @@ static void do_measurements() {
   data_msg[8] = led_pwm::auto_mode;
   data_msg[9] = led_pwm::auto_mode_calculated_pwm;
 
-  led(false);
+  indicator::led(false);
 }
 
 static void query_data() {
@@ -237,7 +232,7 @@ void loop () {
   // handle received message
   if (rf12_recvDone() && rf12_crc == 0 && rf12_len >= 1) {
 
-    led(true);
+    indicator::led(true);
 
     switch (rf12_data[0]) {
     case 0:
@@ -253,7 +248,7 @@ void loop () {
       auto_mode(rf12_data[1]);
       break;
     }
-    led(false);
+    indicator::led(false);
     return;
   }
 
