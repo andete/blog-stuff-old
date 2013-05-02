@@ -6,15 +6,15 @@
 #include <Ports.h>
 #include <JeeLib.h>
 
+#include <avr/wdt.h>
+
 // TODO:
-// - shutdown lamp if fan pulse count drops below 30
-// - increase fan speed when temperature > threshold
-// - shut down lamp if temperature > threshold
 // - ramping pwm changes
 // - hysteresis ?
+// - turn of fan when lamp off and temp below 30
 
 // features:
-// - measure fan pulse 
+// - measure fan pulse for fan pulse per second
 // - measure lux
 // - measure temperature
 // - indicator LED
@@ -93,6 +93,7 @@ namespace fan {
   volatile uint16_t pulse_count = 0;
   static uint16_t pulse_count_save = 0;
   static uint8_t pulse_per_second = 10;
+  static bool forced = false;
 
   void pulse_interrupt() {
     ++pulse_count;
@@ -118,6 +119,15 @@ namespace fan {
   static inline void full_blast() {
     pwm_setting = 255;
     fan_port.anaWrite(pwm_setting);
+  }
+
+  static inline void off() {
+    pwm_setting = 0;
+    fan_port.anaWrite(pwm_setting);
+  }
+
+  static inline void force() {
+    forced = true;
   }
 }
 
@@ -183,14 +193,14 @@ namespace relay {
     relay_port.digiWrite(1);
     delay(1000);
     relay_port.digiWrite(LOW);
-    value = true;
+    value = false;
   }
 
   static inline void on() {
     relay_port.digiWrite2(1);
     delay(1000);
     relay_port.digiWrite2(LOW);
-    value = false;
+    value = true;
   }
 
   static inline void setup() {
@@ -268,10 +278,34 @@ namespace commands {
     ++counter;
   }
 
+  static inline void fan_full_blast() {
+    rf::ack();
+    fan::force();
+    fan::full_blast();
+  }
+
+  static inline void fan_normal() {
+    rf::ack();
+    fan::force();
+    fan::normal();
+  }
+
+  static inline void fan_off() {
+    rf::ack();
+    fan::force();
+    fan::off();
+  }
+
+  static inline void reset() {
+    wdt_enable(WDTO_15MS);
+    for(;;) { } // infinite loop, will reset in 15ms
+  }
+
   static inline void handle() {
     indicator::on();
     // Serial.println(rf::command());
     switch (rf::command()) {
+      // standard commands
       case 0: on(); break;
       case 1: off(); break;
       case 2: dim_value(); break;
@@ -280,6 +314,11 @@ namespace commands {
       case 5: auto_value(); break;
       case 10: query_data(); break;
       case 11: beep(); break;
+      // testing commands
+      case 20: fan_full_blast(); break;
+      case 21: fan_normal(); break;
+      case 22: fan_off(); break;
+      case 50: reset(); break;
     }
     indicator::off();
   }
@@ -287,6 +326,7 @@ namespace commands {
 
 static inline void take_measurements() {
   indicator::on();
+  fan::update_pulse_per_second();
   lux::handle();
   temperature::handle();
 
@@ -308,24 +348,31 @@ static inline void take_measurements() {
 
 static inline void safety_checks() {
 
-  if (temperature::value > 70) {
-    Serial.println(F("Danger, temp > 70, shutting off!"));
+  if (temperature::value > 50) {
+    Serial.println(F("Danger, temp > 50, shutting off!"));
     relay::off();
     return;
   }
 
-  if (temperature::value > 60) {
-    Serial.println(F("temp > 60, fan full blast!"));
-    fan::full_blast();
-  } else {
-    fan::normal();
+  if (!fan::forced) {
+    if (temperature::value > 40) {
+      Serial.println(F("temp > 40, fan full blast!"));
+      fan::full_blast();
+    } else {
+       if (!relay::value && temperature::value < 30) {
+         fan::off();
+       } else {
+         fan::normal();
+       }
+    }
   }
 
-  if (fan::pulse_per_second < 20) {
+  if (fan::pulse_per_second < 20 && fan::pwm_setting > 0) {
     Serial.println(F("fan pulse not found, shutting off!"));
     relay::off();
     return;
   }
+
 }
 
 void setup () {
@@ -353,7 +400,6 @@ void loop () {
   // take measurements every second
   if (loop_count % 20 == 0) { 
 
-    fan::update_pulse_per_second();
     take_measurements(); 
     led_pwm::handle_auto(lux::value, loop_count % 20 == 0);
     loop_count = 0;
@@ -361,4 +407,17 @@ void loop () {
 
   }
   delay(50);
+}
+
+/* make sure the watchdog gets disabled immediately on boot */
+uint8_t mcusr_mirror __attribute__ ((section (".noinit")));
+
+void get_mcusr(void)         \
+    __attribute__((naked))                      \
+    __attribute__((section(".init3")));
+void get_mcusr(void)
+{
+    mcusr_mirror = MCUSR;
+    MCUSR = 0;
+    wdt_disable();
 }
