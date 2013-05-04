@@ -11,7 +11,9 @@
 // TODO:
 // - ramping pwm changes
 // - hysteresis ?
-// - turn of fan when lamp off and temp below 30
+// - fan still needed ?
+// - 3.3V PWM signal only dims up to 33% ;)
+// - relay takes lot of current when switching causing CPU to brownout at times => introduce storage cap on relay board
 
 // features:
 // - measure fan pulse for fan pulse per second
@@ -21,6 +23,9 @@
 // - control fan via PWM
 // - control LED via PWM
 // - switch LED driver power via relay
+
+// settings
+#define NO_BEEP
 
 //
 // Ports & Plugs
@@ -47,6 +52,10 @@ namespace led_pwm {
 
   static inline void setup() {
     pinMode(PIN, OUTPUT);
+    // change PWM frequency to 31250/64 ~= 488Hz
+    // TODO: verify if this is actually needed; I'm guessing it isn't
+    const uint8_t mode = 0x03;
+    TCCR1B = TCCR1B & 0b11111000 | mode;
     analogWrite(PIN, setting);
   }
 
@@ -100,12 +109,15 @@ namespace fan {
   }
 
   static inline void normal() {
+    Serial.println(F("[fan] normal"));
     pwm_setting = default_pwm_setting;
+    fan_port.digiWrite2(HIGH);
     fan_port.anaWrite(pwm_setting);
   }
 
   static inline void setup() {
     fan_port.mode(OUTPUT);
+    fan_port.mode2(OUTPUT);
     attachInterrupt(1, pulse_interrupt, FALLING);
     normal();
   }
@@ -117,11 +129,15 @@ namespace fan {
   }
 
   static inline void full_blast() {
+    Serial.println(F("[fan] full"));
+    fan_port.digiWrite2(HIGH);
     pwm_setting = 255;
     fan_port.anaWrite(pwm_setting);
   }
 
   static inline void off() {
+    Serial.println(F("[fan] off"));
+    fan_port.digiWrite2(LOW);
     pwm_setting = 0;
     fan_port.anaWrite(pwm_setting);
   }
@@ -135,9 +151,11 @@ namespace temperature {
   static int8_t value = 0;
 
   static inline void beep(const int16_t len = 100) {
+#ifndef NO_BEEP
     temperature_port.digiWrite(1);
     delay(len);
     temperature_port.digiWrite(0);
+#endif
   }
 
   static inline void setup() {
@@ -348,12 +366,16 @@ static inline void take_measurements() {
 
 static inline void safety_checks() {
 
-  if (temperature::value > 50) {
-    Serial.println(F("Danger, temp > 50, shutting off!"));
+  if (temperature::value > 55) {
+    Serial.println(F("Danger, temp > 55, shutting off!"));
     relay::off();
     return;
   }
 
+  if (temperature::value > 45) {
+    temperature::beep();
+  }
+#if 0
   if (!fan::forced) {
     if (temperature::value > 40) {
       Serial.println(F("temp > 40, fan full blast!"));
@@ -372,6 +394,7 @@ static inline void safety_checks() {
     relay::off();
     return;
   }
+#endif
 
 }
 
