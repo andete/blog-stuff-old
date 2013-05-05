@@ -25,7 +25,7 @@
 // - switch LED driver power via relay
 
 // settings
-#define NO_BEEP
+// #define NO_BEEP
 
 //
 // Ports & Plugs
@@ -55,7 +55,7 @@ namespace led_pwm {
     // change PWM frequency to 31250/64 ~= 488Hz
     // TODO: verify if this is actually needed; I'm guessing it isn't
     const uint8_t mode = 0x03;
-    TCCR1B = TCCR1B & 0b11111000 | mode;
+    TCCR1B = (TCCR1B & 0b11111000) | mode;
     analogWrite(PIN, setting);
   }
 
@@ -97,20 +97,28 @@ namespace led_pwm {
 }
 
 namespace fan {
-  static const uint8_t default_pwm_setting = 35;
+  namespace pwm {
+    static const uint8_t off = 0;
+    static const uint8_t normal = 35;
+    static const uint8_t high = 100;
+    static const uint8_t very_high = 150;
+    static const uint8_t almost_full = 200;
+    static const uint8_t full = 255;
+  }
+
   static uint8_t pwm_setting = 0;
   volatile uint16_t pulse_count = 0;
   static uint16_t pulse_count_save = 0;
-  static uint8_t pulse_per_second = 10;
-  static bool forced = false;
+  static uint8_t pulse_per_second_prev = 30;
+  static uint8_t pulse_per_second = 30;
 
   void pulse_interrupt() {
     ++pulse_count;
   }
 
-  static inline void normal() {
-    Serial.println(F("[fan] normal"));
-    pwm_setting = default_pwm_setting;
+  static inline void set(uint8_t value, const char *str) {
+    Serial.print(F("[fan] ")); Serial.println(str);
+    pwm_setting = value;
     fan_port.digiWrite2(HIGH);
     fan_port.anaWrite(pwm_setting);
   }
@@ -119,35 +127,23 @@ namespace fan {
     fan_port.mode(OUTPUT);
     fan_port.mode2(OUTPUT);
     attachInterrupt(1, pulse_interrupt, FALLING);
-    normal();
+    set(pwm::normal, "normal");
   }
 
   static inline void update_pulse_per_second() {
     const uint16_t l = pulse_count;
+    pulse_per_second_prev = pulse_per_second;
     pulse_per_second = l - pulse_count_save;
     pulse_count_save = l;
   }
 
-  static inline void full_blast() {
-    Serial.println(F("[fan] full"));
-    fan_port.digiWrite2(HIGH);
-    pwm_setting = 255;
-    fan_port.anaWrite(pwm_setting);
-  }
-
-  static inline void off() {
-    Serial.println(F("[fan] off"));
-    fan_port.digiWrite2(LOW);
-    pwm_setting = 0;
-    fan_port.anaWrite(pwm_setting);
-  }
-
-  static inline void force() {
-    forced = true;
+  static inline bool pulse_ok() {
+    return pulse_per_second_prev >= 20 && pulse_per_second >= 20;
   }
 }
 
 namespace temperature {
+  static int8_t prev_value = 0;
   static int8_t value = 0;
 
   static inline void beep(const int16_t len = 100) {
@@ -155,6 +151,8 @@ namespace temperature {
     temperature_port.digiWrite(1);
     delay(len);
     temperature_port.digiWrite(0);
+#else
+    Serial.println(F("[BEEP!]"));
 #endif
   }
 
@@ -165,7 +163,16 @@ namespace temperature {
 
   static inline void handle() {
     const int16_t t = temperature_port.anaRead();
+    prev_value = value;
     value = map(t, 0, 1023, 0, 330); // 10 mV/C
+  }
+  
+  static bool greater_then(const uint8_t c) {
+    return value > c && prev_value > c;
+  }
+
+  static inline bool safe() {
+    return value < 40 && prev_value < 40;
   }
 }
 
@@ -262,10 +269,15 @@ namespace commands {
   }
 
   static inline void dim_value() {
-    if (rf12_len >= 2) {
-      led_pwm::set_dim(rf12_data[1]);
-    }
+    const uint8_t d = rf12_data[1];
+    const uint8_t l = rf12_len;
     rf::ack();
+    if (l >= 2) {
+      led_pwm::set_dim(d);
+      if (d > 200) {
+        temperature::beep();
+      }
+    }
   }
 
   static inline void auto_on() {
@@ -279,10 +291,12 @@ namespace commands {
   }
 
   static inline void auto_value() {
-    if (rf12_len >= 2) {
-      led_pwm::set_auto(rf12_data[1]);
-    }
+    const uint8_t d = rf12_data[1];
+    const uint8_t l = rf12_len;
     rf::ack();
+    if (l >= 2) {
+      led_pwm::set_auto(d);
+    }
   }
 
   static inline void beep() {
@@ -294,24 +308,6 @@ namespace commands {
     rf12_sendStart(RF12_ACK_REPLY, data_msg, DATA_MSG_SIZE);
     rf12_sendWait(1);
     ++counter;
-  }
-
-  static inline void fan_full_blast() {
-    rf::ack();
-    fan::force();
-    fan::full_blast();
-  }
-
-  static inline void fan_normal() {
-    rf::ack();
-    fan::force();
-    fan::normal();
-  }
-
-  static inline void fan_off() {
-    rf::ack();
-    fan::force();
-    fan::off();
   }
 
   static inline void reset() {
@@ -333,9 +329,6 @@ namespace commands {
       case 10: query_data(); break;
       case 11: beep(); break;
       // testing commands
-      case 20: fan_full_blast(); break;
-      case 21: fan_normal(); break;
-      case 22: fan_off(); break;
       case 50: reset(); break;
     }
     indicator::off();
@@ -366,35 +359,48 @@ static inline void take_measurements() {
 
 static inline void safety_checks() {
 
-  if (temperature::value > 55) {
-    Serial.println(F("Danger, temp > 55, shutting off!"));
+  if (temperature::greater_then(95)) {
+    Serial.println(F("Danger, shutting down!"));
     relay::off();
     return;
   }
 
-  if (temperature::value > 45) {
+  if (temperature::greater_then(90)) {
     temperature::beep();
+    Serial.println(F("Very high temperature, fan full blast!"));
+    fan::set(fan::pwm::full, "full");
+    if (led_pwm::setting > 200) {
+      led_pwm::set_dim(200);
+    }
   }
-#if 0
-  if (!fan::forced) {
-    if (temperature::value > 40) {
-      Serial.println(F("temp > 40, fan full blast!"));
-      fan::full_blast();
+  
+  else if (temperature::greater_then(85)) {
+    Serial.println(F("High temperature, fan high!"));
+    fan::set(fan::pwm::almost_full, "almost full");
+  }
+
+  else if (temperature::greater_then(80)) {
+    Serial.println(F("Warn temperature, fan harder!"));
+    fan::set(fan::pwm::high, "high");
+  }
+  
+  else {
+    fan::set(fan::pwm::normal, "normal");
+  }
+
+  if (!relay::value) {
+    if (temperature::safe()) {
+      fan::set(fan::pwm::off, "off");
     } else {
-       if (!relay::value && temperature::value < 30) {
-         fan::off();
-       } else {
-         fan::normal();
-       }
+      fan::set(fan::pwm::normal, "normal");
     }
   }
 
-  if (fan::pulse_per_second < 20 && fan::pwm_setting > 0) {
+  if (fan::pwm_setting > 0 && !fan::pulse_ok()) {
     Serial.println(F("fan pulse not found, shutting off!"));
     relay::off();
     return;
   }
-#endif
 
 }
 
