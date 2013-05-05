@@ -373,7 +373,16 @@ static inline void safety_checks() {
       led_pwm::set_dim(200);
     }
   }
-  
+
+  else if (temperature::greater_then(80)) {
+    Serial.print(F("High temperature, fan harder: "));
+    const uint8_t v = map(temperature::value, 80, 90, fan::pwm::normal, fan::pwm::full);
+    Serial.println((int)v);
+    fan::set(v, "auto");
+  }
+
+#if 0 
+
   else if (temperature::greater_then(85)) {
     Serial.println(F("High temperature, fan high!"));
     fan::set(fan::pwm::almost_full, "almost full");
@@ -384,6 +393,8 @@ static inline void safety_checks() {
     fan::set(fan::pwm::high, "high");
   }
   
+#endif
+
   else {
     fan::set(fan::pwm::normal, "normal");
   }
