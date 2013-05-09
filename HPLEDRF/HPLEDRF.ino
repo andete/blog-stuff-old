@@ -116,10 +116,22 @@ namespace fan {
     ++pulse_count;
   }
 
+  static inline void on() {
+    fan_port.digiWrite2(LOW);
+  }
+  static inline void off() {
+    fan_port.digiWrite2(HIGH);
+  }
+
+
   static inline void set(uint8_t value, const char *str) {
     Serial.print(F("[fan] ")); Serial.println(str);
     pwm_setting = value;
-    fan_port.digiWrite2(HIGH);
+    if (pwm_setting > 0) {
+      on();
+    } else {
+      off();
+    }
     fan_port.anaWrite(pwm_setting);
   }
 
@@ -260,6 +272,7 @@ namespace rf {
 namespace commands {
   static inline void on() {
     rf::ack();
+    fan::set(fan::pwm::normal, "normal");
     relay::on();
   }
 
@@ -282,6 +295,7 @@ namespace commands {
 
   static inline void auto_on() {
     rf::ack();
+    fan::set(fan::pwm::normal, "normal");
     led_pwm::auto_on();
   }
 
@@ -407,10 +421,18 @@ static inline void safety_checks() {
     }
   }
 
+  static uint8_t no_fan_pulse_count = 0;
+
   if (fan::pwm_setting > 0 && !fan::pulse_ok()) {
-    Serial.println(F("fan pulse not found, shutting off!"));
-    relay::off();
-    return;
+    ++no_fan_pulse_count;
+    if (no_fan_pulse_count > 5) {
+      Serial.println(F("fan pulse not found, shutting off!"));
+      no_fan_pulse_count = 0;
+      relay::off();
+      return;
+    }
+  } else {
+    no_fan_pulse_count = 0;
   }
 
 }
