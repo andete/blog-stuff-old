@@ -425,6 +425,7 @@ static inline void safety_checks() {
 
   if (fan::pwm_setting > 0 && !fan::pulse_ok()) {
     ++no_fan_pulse_count;
+    Serial.println(F("fan pulse not found, counting..."));
     if (no_fan_pulse_count > 5) {
       Serial.println(F("fan pulse not found, shutting off!"));
       no_fan_pulse_count = 0;
