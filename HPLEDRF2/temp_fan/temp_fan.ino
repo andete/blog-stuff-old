@@ -24,8 +24,12 @@ static const float adc_factor = (reference_voltage/1024)/(5E-3);
 static inline bool rf_available() {
   return (rf12_recvDone() && rf12_crc == 0 && rf12_len >= 1);
 }
-static inline void rf_ack() {
-  rf12_sendStart(RF12_ACK_REPLY, 0, 0);
+
+static inline void rf_ack(const uint8_t reply_address) {
+  static uint8_t data[3];
+  data[0] = RF_ID;
+  data[1] = reply_address;
+  rf12_sendStart(RF12_ACK_REPLY, data, sizeof data);
   rf12_sendWait(1);
 }
 
@@ -37,21 +41,24 @@ static void pulse_interrupt() {
 static int8_t temperature = 0;
 static uint8_t pwm_setting = 128;
 
-static inline void send_data() {
-  static uint8_t data[4];
-  data[0] = temperature;
-  data[1] = pulse_count / 256;
-  data[2] = pulse_count % 256;
-  data[3] = pwm_setting;
-  rf12_sendStart(RF12_ACK_REPLY, data, 4);
+
+static inline void send_data(const uint8_t reply_address) {
+  static uint8_t data[6];
+  data[0] = RF_ID;
+  data[1] = reply_address;
+  data[2] = temperature;
+  data[3] = pulse_count / 256;
+  data[4] = pulse_count % 256;
+  data[5] = pwm_setting;
+  rf12_sendStart(RF12_ACK_REPLY, data, sizeof data);
   rf12_sendWait(1);
   Serial.println("[send_data]");
 }
 
-static inline void set_pwm() {
+static inline void set_pwm(const uint8_t reply_address) {
  pwm_setting = rf12_data[1];
  analogWrite(FAN_PWM, pwm_setting);
- rf_ack();
+ rf_ack(reply_address);
   Serial.println("[set_pwm]");
 }
 
@@ -80,10 +87,14 @@ void setup() {
 void loop() {
   static uint8_t lc = 0;
   if (rf_available()) {
-    const uint8_t cmd = rf12_data[0];
-    switch (cmd) {
-      case 1: send_data(); break;
-      case 2: set_pwm(); break;
+    const uint8_t source = rf12_data[0];
+    const uint8_t target = rf12_data[1];
+    if (target == RF_ID) {
+      const uint8_t cmd = rf12_data[2];
+      switch (cmd) {
+        case 1: send_data(source); break;
+        case 2: set_pwm(source); break;
+      }
     } 
   }
   delay(100);
