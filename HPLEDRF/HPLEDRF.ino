@@ -251,8 +251,8 @@ namespace relay {
 
 namespace rf {
   static inline void setup() {
-    // this is node 1 in net group 100 on the 868 MHz band
-    rf12_initialize(1, RF12_868MHZ, 100);
+    // this is node 2 in net group 100 on the 868 MHz band
+    rf12_initialize(2, RF12_868MHZ, 100);
   }
 
   static inline bool available() {

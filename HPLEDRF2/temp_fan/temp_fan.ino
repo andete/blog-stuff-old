@@ -45,14 +45,14 @@ static uint8_t pwm_setting = 128;
 
 
 static inline void send_data(const uint8_t reply_address) {
-  static uint8_t data[6];
+  static uint8_t data[7];
   data[0] = RF_ID;
   data[1] = reply_address;
   data[2] = CMD_TEMP_FAN_Q;
-  data[2] = temperature;
-  data[3] = pulse_count / 256;
-  data[4] = pulse_count % 256;
-  data[5] = pwm_setting;
+  data[3] = temperature;
+  data[4] = pulse_count / 256;
+  data[5] = pulse_count % 256;
+  data[6] = pwm_setting;
   rf12_sendStart(0, data, sizeof data);
   rf12_sendWait(1);
   Serial.println("[send_data]");
@@ -92,7 +92,7 @@ void loop() {
   if (rf_available()) {
     const uint8_t source = rf12_data[0];
     const uint8_t target = rf12_data[1];
-    if (target == RF_ID) {
+    if (target == RF_ID || target == 0) {
       const uint8_t cmd = rf12_data[2];
       switch (cmd) {
         case CMD_TEMP_FAN_Q: send_data(source); break;
@@ -107,5 +107,6 @@ void loop() {
      const float raw_temp = analogRead(TEMP_PIN); // steps
      temperature = raw_temp * adc_factor;
      Serial.print(temperature); Serial.print(" "); Serial.println(pulse_count);
+     send_data(0);
   }
 }
