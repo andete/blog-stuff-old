@@ -19,12 +19,14 @@
 static Adafruit_TSL2561 lux(LUX_ADDR, 1);
 
 static void reset_relay() {
+  Serial.println("Disable LED.");
   digitalWrite(RELAY_RESET, HIGH);
   delay(500);
   digitalWrite(RELAY_RESET, LOW);
 }
 
 static void set_relay() {
+  Serial.println("Enable LED.");
   digitalWrite(RELAY_SET, HIGH);
   delay(500);
   digitalWrite(RELAY_SET, LOW);
