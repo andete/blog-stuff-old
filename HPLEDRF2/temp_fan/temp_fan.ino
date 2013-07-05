@@ -41,7 +41,7 @@ static void pulse_interrupt() {
   }
 
 static int8_t temperature = 0;
-static uint8_t pwm_setting = 128;
+static uint8_t pwm_setting = 64;
 
 
 static inline void send_data(const uint8_t reply_address) {

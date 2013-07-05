@@ -77,6 +77,7 @@ void setup() {
 
 static float light = 0.0;
 static uint8_t temperature = -1;
+static int32_t pprev_pulse_count = -2;
 static int32_t prev_pulse_count = -1;
 static int32_t pulse_count = 0;
 static uint8_t fan_pwm_setting = 128;
@@ -94,11 +95,11 @@ static void get_lux() {
 static uint64_t lc = 0;
 
 static void safety_checks() {
-  if (lc - fan_pwm_msg_lc > 20) {
+  if (lc - fan_pwm_msg_lc > 40) {
     Serial.println("did not hear from fan! shutdown LED.");
     reset_relay();
   }
-  if (prev_pulse_count == pulse_count) {
+  if (prev_pulse_count == pulse_count && pprev_pulse_count == prev_pulse_count) {
     Serial.println("no fan pulse detected! shutdown LED.");
     reset_relay();
   }
@@ -131,6 +132,7 @@ void loop() {
         break;
       case CMD_TEMP_FAN_Q:
         temperature = rf12_data[3];
+        pprev_pulse_count = prev_pulse_count;
         prev_pulse_count = pulse_count;
         pulse_count = ((int32_t)rf12_data[4])*256 + rf12_data[5];
         fan_pwm_setting = rf12_data[6];
