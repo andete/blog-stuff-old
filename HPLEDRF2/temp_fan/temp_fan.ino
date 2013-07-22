@@ -7,7 +7,15 @@
 
 #include "../relay_pwm/settings.h"
 
+// #define SECOND
+
+#ifndef SECOND
 #define RF_ID TEMP_FAN_RF_ID
+#define MY_R_ID LED_PWM_RF_ID
+#else
+#define RF_ID TEMP_FAN_RF_ID2
+#define MY_R_ID LED_PWM_RF_ID2
+#endif
 
 // PD3
 #define FAN_PULSE 3
@@ -68,10 +76,11 @@ static inline void set_pwm(const uint8_t reply_address, const uint8_t val) {
 void setup() {
   // Serial
   Serial.begin(9600);
-  Serial.println("Hello.");
+  Serial.print("Hello I am temp fan v"); Serial.println(VERSION);
 
   // RF
   rf12_initialize(RF_ID, RF12_868MHZ, RF_GROUP);
+  Serial.print("RF ready at "); Serial.println(RF_ID);
 
   // PWM
   pinMode(FAN_PWM, OUTPUT);
@@ -102,11 +111,11 @@ void loop() {
   }
   delay(100);
   ++lc;
-  if (lc % 16 == 0) {
+  if (lc % (12 + 2*RF_ID) == 0) {
      // take temperature, check fan pulse
      const float raw_temp = analogRead(TEMP_PIN); // steps
      temperature = raw_temp * adc_factor;
      Serial.print(temperature); Serial.print(" "); Serial.println(pulse_count);
-     send_data(0);
+     send_data(MY_R_ID);
   }
 }

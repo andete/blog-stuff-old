@@ -8,15 +8,26 @@
 
 #include "settings.h"
 
+// #define SECOND
+
+#ifndef SECOND
 #define RF_ID LED_PWM_RF_ID
+#define MY_S_ID TEMP_FAN_RF_ID
+#else
+#define RF_ID LED_PWM_RF_ID2
+#define MY_S_ID TEMP_FAN_RF_ID2
+#endif
 
 #define LED_PWM 5
 #define RELAY_RESET 8
 #define RELAY_SET 9
 
+// only first board has Lux sensor connected
+#ifndef SECOND
 #define LUX_ADDR 0x39
 
 static Adafruit_TSL2561 lux(LUX_ADDR, 1);
+#endif
 
 static void reset_relay() {
   Serial.println("Disable LED.");
@@ -48,7 +59,7 @@ static inline void rf_ack(const uint8_t cmd, const uint8_t reply_address) {
 void setup() {
   // Serial
   Serial.begin(9600);
-  Serial.println("Hello.");
+  Serial.print("Hello I am v"); Serial.println(VERSION);
 
   // setup relay
   pinMode(RELAY_RESET, OUTPUT);
@@ -59,11 +70,14 @@ void setup() {
 
   // RF
   rf12_initialize(RF_ID, RF12_868MHZ, RF_GROUP);
+  Serial.print("RF initialized as "); Serial.println(RF_ID);
+  Serial.print("temp/fan is at "); Serial.println(MY_S_ID);
 
   // PWM
   pinMode(LED_PWM, OUTPUT);
   analogWrite(LED_PWM, 40);
 
+#ifndef SECOND
   // LUX
   if (lux.begin()) {
     //lux.enableAutoGain(true);
@@ -72,6 +86,7 @@ void setup() {
   } else {
     Serial.println("Lux init failure.");
   }
+#endif
 
 }
 
@@ -83,6 +98,7 @@ static int32_t pulse_count = 0;
 static uint8_t fan_pwm_setting = 128;
 static uint64_t fan_pwm_msg_lc = 0;
 
+#ifndef SECOND
 static void get_lux() {
   uint16_t broadband, ir;
   lux.getLuminosity(&broadband, &ir);
@@ -91,11 +107,12 @@ static void get_lux() {
   light = lux.calculateLux(broadband, ir);
   Serial.print(light); Serial.println(" lux");
 }
+#endif
 
 static uint64_t lc = 0;
 
 static void safety_checks() {
-  if (lc - fan_pwm_msg_lc > 40) {
+  if (lc - fan_pwm_msg_lc > 80) {
     Serial.println("did not hear from fan! shutdown LED.");
     reset_relay();
   }
@@ -113,8 +130,10 @@ void loop() {
   if (rf_available()) {
     const uint8_t source = rf12_data[0];
     const uint8_t target = rf12_data[1];
-    if (target == RF_ID || target == 0) {
     const uint8_t cmd = rf12_data[2];
+    //Serial.print((int)source); Serial.print("-> ["); 
+    //Serial.print((int)cmd); Serial.print("] ");
+    if (target == RF_ID || target == 0) {
     Serial.print((int)source); Serial.print("-> ["); 
     Serial.print((int)cmd); Serial.print("] ");
     switch (cmd) {
@@ -131,6 +150,9 @@ void loop() {
         analogWrite(LED_PWM, rf12_data[3]); 
         break;
       case CMD_TEMP_FAN_Q:
+        if (source != MY_S_ID) {
+          break;
+        }
         temperature = rf12_data[3];
         pprev_pulse_count = prev_pulse_count;
         prev_pulse_count = pulse_count;
@@ -144,7 +166,9 @@ void loop() {
   delay(100);
   ++lc;
   if (lc % 16 == 0) {
+#ifndef SECOND
     get_lux();
+#endif
     safety_checks();
   }
 }
