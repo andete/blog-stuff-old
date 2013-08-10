@@ -1,3 +1,6 @@
+// (C) 2013 Joost Yervante Damad <joost@damad.be>
+// License: GPL3
+
 #include <avr/io.h>
 #include <util/delay.h>
 #include <avr/interrupt.h>
@@ -99,6 +102,7 @@ int main( void )
   }
 }
 
+// USART RX receive interrupt handler
 ISR(USARTD0_RXC_vect) {
   echo_char = USARTD0.DATA;
 }
