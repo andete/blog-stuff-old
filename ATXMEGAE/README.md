@@ -7,4 +7,8 @@ Atxmega32E5 stuff
 
 related blog posts:
 
-* TODO
+* http://joost.damad.be/2013/08/using-atxmega32e5-under-linux.html
+
+related tindie product:
+
+* https://www.tindie.com/products/andete/atxmega32e5-breakout-board/
