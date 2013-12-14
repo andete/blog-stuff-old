@@ -1,0 +1,54 @@
+# this was the readme.txt included at http://www.overtracks.com/stm32/baby-steps.htm
+
+last update: 2012-04-29
+
+Linux instructions: (should be nearly the same on Windows)
+  --- compiler suite ---
+    Linaro: https://launchpad.net/gcc-arm-embedded
+      or
+    Mentor Graphics Sourcery Codebench(formerly Codesourcery):
+      http://www.mentor.com/embedded-software/codesourcery
+      
+    * unzip to your preferred location
+    * set CCHOME in Makefile to that location
+    
+  --- include files ---
+    ST Full library set:
+      http://www.st.com/internet/com/SOFTWARE_RESOURCES/SW_COMPONENT/FIRMWARE/stm32_f105-07_f2_f4_usb-host-device_lib.zip
+      (updated frequently - location changes even more frequently)
+    * unzip to your preferred location
+    * set STMHOME in Makefile to point to Libraries subdirectory of that location
+    * gcc needs to find:
+    ** $(stmhome)/CMSIS/Device/ST/STM32F10x/Include/stm32f10x.h         <--from main.c
+    ** $(stmhome)/CMSIS/Device/ST/STM32F10x/Include/system_stm32f10x.h  <--from stm32f10x.h
+    ** $(stmhome)/CMSIS/Include/core_cm3.h                              <--from stm32f10x.h
+    ** $(stmhome)/CMSIS/Include/core_cmFunc.h                           <--from core.cm3.h
+    ** $(stmhome)/CMSIS/Include/core_cmInstr.h                          <--from core.cm3.h
+    ** $(cchome)/arm-none-eabi/include/stdint.h                         <--from stm32f10x.h, core_cm3.h
+    You can copy those files to your project directory and delete the $(ID1) etc from the Makefile if you prefer
+    To use the StdPeriph_Drivers, modify the Makefile, e.g. ID5 = $(STMHOME)/STM32F10x_StdPeriph_Driver/inc
+    with -I $(ID5) added to CFLAGS
+    
+  --- startup_stm32fxxx.s ---
+    * replace with the appropriate file from
+      $(STMHOME)/CMSIS/Device/ST/STM32F10x/Source/Templates/gcc_ride7
+    * modify the crto.o: section of the Makefile to call for that file
+    
+  --- stm.ld ---
+    IMO by far the most mysterious piece of the project
+    The sections might be described in gccint.pdf ?
+    The supplied file is based on Raisononce
+    It is butchered - no longer works for external memory
+    * change length of RAM and FLASH to match your chip
+    * beyond that you are on your own
+    
+  --- main.c ---
+    * all hard coded
+    * change port and bit(s) to suit your hardware
+    
+  --- Makefile ---
+    in addition to the changes already mentioned:
+    * change ID2 to reflect your compiler version (or just delete it)
+    * change -D STM32F10X_MD to reflect your chip (MD = medium density)
+    
+    CFLAGS and LDFLAGS should be ok for a blinky with STM32F10x
